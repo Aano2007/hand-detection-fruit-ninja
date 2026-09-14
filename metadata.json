@@ -1,0 +1,6 @@
+{
+  "name": "Hand-Tracking Fruit Ninja",
+  "description": "Interactive computer vision Fruit Ninja game featuring real-time hand tracking, MediaPipe landmark detection, blade trails, physics-based fruit slicing, and exhibition telemetry.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

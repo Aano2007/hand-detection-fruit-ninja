@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Outfit', sans-serif;
+    user-select: none;
+    overflow: hidden;
+    background-color: #120b08;
+    color: #f3f4f6;
+  }
+}
+
+.font-cinzel {
+  font-family: 'Cinzel', serif;
+}
+
+.font-marker {
+  font-family: 'Permanent Marker', cursive;
+}
+
+.wood-grain {
+  background-color: #24140e;
+  background-image: radial-gradient(#3a2016 15%, transparent 16%), radial-gradient(#331a10 15%, transparent 16%);
+  background-size: 60px 60px;
+  background-position: 0 0, 30px 30px;
+}
