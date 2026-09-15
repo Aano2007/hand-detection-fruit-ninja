@@ -20,6 +20,7 @@ interface GameCanvasProps {
   status: GameStatus;
   bladeStyle: BladeStyle;
   bladeInputPos: { x: number; y: number } | null;
+  bladeInputPosRef: React.RefObject<{ x: number; y: number } | null>;
   onScoreUpdate: (points: number, comboCount: number) => void;
   onStrike: () => void;
   onGameOver: () => void;
@@ -33,6 +34,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   status,
   bladeStyle,
   bladeInputPos,
+  bladeInputPosRef,
   onScoreUpdate,
   onStrike,
   onGameOver,
@@ -395,24 +397,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [checkCollisions, bladeStyle]
   );
 
-  // Synchronize hand tracking coordinate to canvas
-  useEffect(() => {
-    if (!bladeInputPos) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    if (bladeInputPos.x >= 0 && bladeInputPos.y >= 0) {
-      const dpr = window.devicePixelRatio || 1;
-      const cssWidth = canvas.width / dpr;
-      const cssHeight = canvas.height / dpr;
-      const canvasX = bladeInputPos.x * cssWidth;
-      const canvasY = bladeInputPos.y * cssHeight;
-      addBladePoint(canvasX, canvasY);
-    } else {
-      // Clear trail when hand disappears
-      bladeTrailRef.current = [];
-    }
-  }, [bladeInputPos, addBladePoint]);
+  // Synchronize hand tracking coordinate to canvas — reads ref directly inside the game loop
+  const lastHandPosRef = useRef<{ x: number; y: number } | null>(null);
+  const addBladePointRef = useRef(addBladePoint);
+  useEffect(() => { addBladePointRef.current = addBladePoint; }, [addBladePoint]);
 
   // Mouse & Touch events handlers
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -462,6 +450,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const loop = (timestamp: number) => {
       const dt = Math.min((timestamp - lastFrameTimeRef.current) / 1000, 0.1);
       lastFrameTimeRef.current = timestamp;
+
+      // Read hand position ref every frame — zero React overhead
+      const handPos = bladeInputPosRef.current;
+      const canvas2 = canvasRef.current;
+      if (canvas2 && handPos) {
+        const dpr2 = window.devicePixelRatio || 1;
+        const cx = handPos.x * (canvas2.width / dpr2);
+        const cy = handPos.y * (canvas2.height / dpr2);
+        if (cx !== lastHandPosRef.current?.x || cy !== lastHandPosRef.current?.y) {
+          lastHandPosRef.current = { x: cx, y: cy };
+          addBladePointRef.current(cx, cy);
+        }
+      } else if (!handPos && lastHandPosRef.current !== null) {
+        lastHandPosRef.current = null;
+        bladeTrailRef.current = [];
+      }
 
       const dpr = window.devicePixelRatio || 1;
       const width = canvas.width / dpr;

@@ -32,7 +32,7 @@ export class VisionTracker {
   private isInitializing = false;
   private pinchThreshold = 0.09;
   private smoothBladePos = { x: 0.5, y: 0.5 };
-  private alpha = 0.75; // Responsive smoothing factor
+  private alpha = 0.92; // Responsive smoothing factor
 
   // FPS calculation
   private frameCount = 0;
@@ -69,9 +69,9 @@ export class VisionTracker {
         },
         runningMode: 'VIDEO',
         numHands: 1,
-        minHandDetectionConfidence: 0.4,
-        minHandPresenceConfidence: 0.4,
-        minTrackingConfidence: 0.4,
+        minHandDetectionConfidence: 0.25,
+        minHandPresenceConfidence: 0.25,
+        minTrackingConfidence: 0.25,
       });
 
       this.isInitializing = false;
@@ -88,9 +88,9 @@ export class VisionTracker {
           },
           runningMode: 'VIDEO',
           numHands: 1,
-          minHandDetectionConfidence: 0.35,
-          minHandPresenceConfidence: 0.35,
-          minTrackingConfidence: 0.35,
+          minHandDetectionConfidence: 0.2,
+          minHandPresenceConfidence: 0.2,
+          minTrackingConfidence: 0.2,
         });
         this.isInitializing = false;
         console.log('[VisionTracker] Successfully initialized HandLandmarker (CPU)');
@@ -129,8 +129,8 @@ export class VisionTracker {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 320 },
+          height: { ideal: 240 },
         },
         audio: false,
       });
@@ -174,6 +174,8 @@ export class VisionTracker {
 
   private startLoop(callback: HandLandmarksCallback, pinchOnlyMode: boolean) {
     let lastVideoTime = -1;
+    // Run detection at ~30fps via setTimeout so it doesn't compete with the game's rAF loop
+    const DETECT_INTERVAL = 33;
 
     const processLoop = () => {
       if (!this.isRunning) return;
@@ -191,29 +193,23 @@ export class VisionTracker {
         if (video.currentTime !== lastVideoTime) {
           lastVideoTime = video.currentTime;
           try {
-            // Timestamp passed to detectForVideo must be monotonically increasing
             const timestamp = now > this.lastDetectTimestamp ? now : this.lastDetectTimestamp + 1;
             this.lastDetectTimestamp = timestamp;
 
             const results = this.handLandmarker.detectForVideo(video, timestamp);
             if (results && results.landmarks && results.landmarks.length > 0) {
               const hand = results.landmarks[0];
-              // Landmark 8: Index finger tip
               const indexTip = hand[8];
-              // Landmark 4: Thumb tip
               const thumbTip = hand[4];
 
-              // Calculate pinch distance between thumb and index
               const dx = thumbTip.x - indexTip.x;
               const dy = thumbTip.y - indexTip.y;
               const pinchDistance = Math.sqrt(dx * dx + dy * dy);
               const isPinching = pinchDistance < this.pinchThreshold;
 
-              // Mirror X coordinate for natural mirror control (camera is mirrored in UI)
               const mirroredX = 1 - indexTip.x;
               const targetY = indexTip.y;
 
-              // Exponential smoothing for buttery blade response
               this.smoothBladePos.x = this.alpha * mirroredX + (1 - this.alpha) * this.smoothBladePos.x;
               this.smoothBladePos.y = this.alpha * targetY + (1 - this.alpha) * this.smoothBladePos.y;
 
@@ -232,14 +228,12 @@ export class VisionTracker {
                 inputMode: 'hand',
               };
 
-              // In pinchOnlyMode, blade is only active while pinching; in default mode, index finger is always live blade
               if (!pinchOnlyMode || isPinching) {
                 callback({ x: this.smoothBladePos.x, y: this.smoothBladePos.y }, stats, hand);
               } else {
                 callback({ x: -1, y: -1 }, stats, hand);
               }
             } else {
-              // Hand temporarily not detected in frame
               const stats: VisionStats = {
                 fps: this.currentFps,
                 isTracking: true,
@@ -262,16 +256,16 @@ export class VisionTracker {
         }
       }
 
-      this.animationFrameId = requestAnimationFrame(processLoop);
+      this.animationFrameId = setTimeout(processLoop, DETECT_INTERVAL) as unknown as number;
     };
 
-    this.animationFrameId = requestAnimationFrame(processLoop);
+    this.animationFrameId = setTimeout(processLoop, DETECT_INTERVAL) as unknown as number;
   }
 
   public stopCamera() {
     this.isRunning = false;
     if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
+      clearTimeout(this.animationFrameId);
       this.animationFrameId = null;
     }
     if (this.stream) {
@@ -282,15 +276,6 @@ export class VisionTracker {
       this.video.srcObject = null;
     }
     this.lastDetectTimestamp = -1;
-  }
-
-  public setSmoothingFactor(factor: number) {
-    // Clamp alpha between 0.1 (maximum smoothing / slower response) and 1.0 (raw instant tracking / highest sensitivity)
-    this.alpha = Math.max(0.1, Math.min(1.0, factor));
-  }
-
-  public getSmoothingFactor(): number {
-    return this.alpha;
   }
 }
 

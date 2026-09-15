@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { VisionStats } from '../types';
-import { Camera, CameraOff, ChevronDown, ChevronUp, Cpu, Hand, AlertCircle, Sliders } from 'lucide-react';
+import { Camera, CameraOff, ChevronDown, ChevronUp, Cpu, Hand, AlertCircle } from 'lucide-react';
 import { HAND_CONNECTIONS, NormalizedLandmark } from '../utils/visionTracker';
 
 interface VisionHUDProps {
@@ -13,8 +13,6 @@ interface VisionHUDProps {
   allLandmarks: NormalizedLandmark[] | null;
   isExpanded: boolean;
   onToggleExpand: () => void;
-  smoothingFactor: number;
-  onSmoothingChange: (value: number) => void;
 }
 
 export const VisionHUD: React.FC<VisionHUDProps> = ({
@@ -27,8 +25,6 @@ export const VisionHUD: React.FC<VisionHUDProps> = ({
   allLandmarks,
   isExpanded,
   onToggleExpand,
-  smoothingFactor,
-  onSmoothingChange,
 }) => {
   const skeletonCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -190,33 +186,6 @@ export const VisionHUD: React.FC<VisionHUDProps> = ({
           <div className="flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-lg bg-black/60 border border-stone-800 text-stone-300">
             <Cpu className="w-3 h-3 text-emerald-400" />
             <span>{stats.fps} FPS</span>
-          </div>
-        </div>
-
-        {/* Smoothing Sensitivity Slider */}
-        <div className="flex flex-col gap-1 pt-1 border-t border-stone-800/80">
-          <div className="flex items-center justify-between text-[11px] text-stone-300 font-medium">
-            <div className="flex items-center gap-1.5 text-amber-300">
-              <Sliders className="w-3.5 h-3.5 text-amber-400" />
-              <span>Blade Sensitivity:</span>
-            </div>
-            <span className="font-mono text-cyan-300 font-semibold">
-              {Math.round(smoothingFactor * 100)}% {smoothingFactor >= 0.85 ? '(Ultra Fast)' : smoothingFactor <= 0.45 ? '(Smooth)' : '(Balanced)'}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-stone-500">Smooth</span>
-            <input
-              type="range"
-              min="0.2"
-              max="1.0"
-              step="0.05"
-              value={smoothingFactor}
-              onChange={(e) => onSmoothingChange(parseFloat(e.target.value))}
-              aria-label="Hand Tracking Blade Responsiveness Slider"
-              className="w-full h-1.5 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-400 focus:outline-none"
-            />
-            <span className="text-[10px] text-stone-500">Instant</span>
           </div>
         </div>
 

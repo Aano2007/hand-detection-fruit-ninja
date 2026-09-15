@@ -44,9 +44,10 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [pinchOnlyMode, setPinchOnlyMode] = useState<boolean>(false);
-  const [smoothingFactor, setSmoothingFactor] = useState<number>(0.75);
+  const bladeInputPosRef = useRef<{ x: number; y: number } | null>(null);
   const [bladeInputPos, setBladeInputPos] = useState<{ x: number; y: number } | null>(null);
   const [allLandmarks, setAllLandmarks] = useState<NormalizedLandmark[] | null>(null);
+  const landmarkFrameRef = useRef<number>(0);
   const [visionStats, setVisionStats] = useState<VisionStats>({
     fps: 60,
     isTracking: false,
@@ -182,9 +183,15 @@ export default function App() {
       const res = await visionTracker.startCamera(
         videoRef.current,
         (bladePos, stats, landmarks) => {
-          setBladeInputPos(bladePos);
-          setVisionStats(stats);
-          setAllLandmarks(landmarks);
+          // Update ref immediately (no re-render) so game loop gets it next frame
+          bladeInputPosRef.current = bladePos.x >= 0 ? bladePos : null;
+          // Throttle React state updates to ~10fps to avoid re-render lag
+          landmarkFrameRef.current++;
+          if (landmarkFrameRef.current % 6 === 0) {
+            setBladeInputPos(bladePos.x >= 0 ? bladePos : null);
+            setVisionStats(stats);
+            setAllLandmarks(landmarks);
+          }
         },
         pinchOnlyMode
       );
@@ -212,9 +219,13 @@ export default function App() {
         const res = await visionTracker.startCamera(
           videoRef.current,
           (bladePos, stats, landmarks) => {
-            setBladeInputPos(bladePos);
-            setVisionStats(stats);
-            setAllLandmarks(landmarks);
+            bladeInputPosRef.current = bladePos.x >= 0 ? bladePos : null;
+            landmarkFrameRef.current++;
+            if (landmarkFrameRef.current % 6 === 0) {
+              setBladeInputPos(bladePos.x >= 0 ? bladePos : null);
+              setVisionStats(stats);
+              setAllLandmarks(landmarks);
+            }
           },
           pinchOnlyMode
         );
@@ -235,12 +246,6 @@ export default function App() {
 
     return () => clearTimeout(autoActivateTimer);
   }, [pinchOnlyMode, isCameraActive]);
-
-  // Handle smoothing sensitivity change
-  const handleSmoothingChange = (factor: number) => {
-    setSmoothingFactor(factor);
-    visionTracker.setSmoothingFactor(factor);
-  };
 
   // Clean camera on unmount
   useEffect(() => {
@@ -284,6 +289,7 @@ export default function App() {
         status={status}
         bladeStyle={selectedBlade}
         bladeInputPos={bladeInputPos}
+        bladeInputPosRef={bladeInputPosRef}
         onScoreUpdate={handleScoreUpdate}
         onStrike={handleStrike}
         onGameOver={handleGameOver}
@@ -320,8 +326,6 @@ export default function App() {
         allLandmarks={allLandmarks}
         isExpanded={isPipExpanded}
         onToggleExpand={() => setIsPipExpanded(!isPipExpanded)}
-        smoothingFactor={smoothingFactor}
-        onSmoothingChange={handleSmoothingChange}
       />
 
       {/* Main Menu Screen (Idle Status) */}
