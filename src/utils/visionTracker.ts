@@ -32,7 +32,7 @@ export class VisionTracker {
   private isInitializing = false;
   private pinchThreshold = 0.09;
   private smoothBladePos = { x: 0.5, y: 0.5 };
-  private alpha = 0.92; // Responsive smoothing factor
+  private isFirstPoint = true;
 
   // FPS calculation
   private frameCount = 0;
@@ -54,53 +54,69 @@ export class VisionTracker {
     }
 
     this.isInitializing = true;
-    const wasmUrl = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm';
-    const modelUrl = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
-    try {
-      console.log('[VisionTracker] Loading FilesetResolver with wasm:', wasmUrl);
-      const vision = await FilesetResolver.forVisionTasks(wasmUrl);
+    const candidates = [
+      {
+        wasm: `${window.location.origin}/wasm`,
+        model: `${window.location.origin}/models/hand_landmarker.task`,
+      },
+      {
+        wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm',
+        model: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+      },
+      {
+        wasm: 'https://unpkg.com/@mediapipe/tasks-vision@0.10.21/wasm',
+        model: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+      },
+    ];
 
-      console.log('[VisionTracker] Creating HandLandmarker with GPU delegate...');
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: modelUrl,
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numHands: 1,
-        minHandDetectionConfidence: 0.25,
-        minHandPresenceConfidence: 0.25,
-        minTrackingConfidence: 0.25,
-      });
-
-      this.isInitializing = false;
-      console.log('[VisionTracker] Successfully initialized HandLandmarker (GPU)');
-      return true;
-    } catch (err) {
-      console.warn('[VisionTracker] GPU initialization failed, falling back to CPU:', err);
+    for (let i = 0; i < candidates.length; i++) {
+      const { wasm, model } = candidates[i];
       try {
-        const vision = await FilesetResolver.forVisionTasks(wasmUrl);
-        this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: modelUrl,
-            delegate: 'CPU',
-          },
-          runningMode: 'VIDEO',
-          numHands: 1,
-          minHandDetectionConfidence: 0.2,
-          minHandPresenceConfidence: 0.2,
-          minTrackingConfidence: 0.2,
-        });
-        this.isInitializing = false;
-        console.log('[VisionTracker] Successfully initialized HandLandmarker (CPU)');
-        return true;
-      } catch (cpuErr) {
-        console.error('[VisionTracker] Failed to initialize HandLandmarker on both GPU & CPU:', cpuErr);
-        this.isInitializing = false;
-        return false;
+        console.log(`[VisionTracker] Attempting to load HandLandmarker (source ${i + 1}):`, wasm);
+        const vision = await FilesetResolver.forVisionTasks(wasm);
+
+        // Try GPU first
+        try {
+          this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: model,
+              delegate: 'GPU',
+            },
+            runningMode: 'VIDEO',
+            numHands: 1,
+            minHandDetectionConfidence: 0.15,
+            minHandPresenceConfidence: 0.15,
+            minTrackingConfidence: 0.15,
+          });
+          this.isInitializing = false;
+          console.log('[VisionTracker] Successfully initialized HandLandmarker (GPU)');
+          return true;
+        } catch (gpuErr) {
+          console.warn('[VisionTracker] GPU failed, trying CPU...', gpuErr);
+          this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: model,
+              delegate: 'CPU',
+            },
+            runningMode: 'VIDEO',
+            numHands: 1,
+            minHandDetectionConfidence: 0.15,
+            minHandPresenceConfidence: 0.15,
+            minTrackingConfidence: 0.15,
+          });
+          this.isInitializing = false;
+          console.log('[VisionTracker] Successfully initialized HandLandmarker (CPU)');
+          return true;
+        }
+      } catch (err) {
+        console.warn(`[VisionTracker] Source ${i + 1} failed:`, err);
       }
     }
+
+    this.isInitializing = false;
+    console.error('[VisionTracker] Failed to initialize HandLandmarker from all sources');
+    return false;
   }
 
   public async startCamera(
@@ -174,8 +190,8 @@ export class VisionTracker {
 
   private startLoop(callback: HandLandmarksCallback, pinchOnlyMode: boolean) {
     let lastVideoTime = -1;
-    // Run detection at ~30fps via setTimeout so it doesn't compete with the game's rAF loop
-    const DETECT_INTERVAL = 33;
+    // Run detection at ~60fps for ultra-responsive hand tracking
+    const DETECT_INTERVAL = 16;
 
     const processLoop = () => {
       if (!this.isRunning) return;
@@ -210,8 +226,21 @@ export class VisionTracker {
               const mirroredX = 1 - indexTip.x;
               const targetY = indexTip.y;
 
-              this.smoothBladePos.x = this.alpha * mirroredX + (1 - this.alpha) * this.smoothBladePos.x;
-              this.smoothBladePos.y = this.alpha * targetY + (1 - this.alpha) * this.smoothBladePos.y;
+              if (this.isFirstPoint) {
+                this.smoothBladePos.x = mirroredX;
+                this.smoothBladePos.y = targetY;
+                this.isFirstPoint = false;
+              } else {
+                // Ultra-responsive velocity-dependent smoothing:
+                // Baseline alpha 0.78 for instant response even on small subtle finger movements
+                // Fast slashes scale up to 0.98 for near zero-latency tracking
+                const dist = Math.hypot(mirroredX - this.smoothBladePos.x, targetY - this.smoothBladePos.y);
+                const speedFactor = Math.min(1, Math.max(0, (dist - 0.001) / 0.016));
+                const dynamicAlpha = 0.78 + speedFactor * (0.98 - 0.78);
+
+                this.smoothBladePos.x += (mirroredX - this.smoothBladePos.x) * dynamicAlpha;
+                this.smoothBladePos.y += (targetY - this.smoothBladePos.y) * dynamicAlpha;
+              }
 
               const stats: VisionStats = {
                 fps: this.currentFps,
@@ -276,6 +305,7 @@ export class VisionTracker {
       this.video.srcObject = null;
     }
     this.lastDetectTimestamp = -1;
+    this.isFirstPoint = true;
   }
 }
 

@@ -66,6 +66,8 @@ export interface SlicedHalf {
   innerColor: string;
   rindColor?: string;
   life: number;
+  cutOffset?: number;
+  scrambledPoints?: { x: number; y: number }[];
 }
 
 export interface Particle {

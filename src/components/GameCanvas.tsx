@@ -12,7 +12,7 @@ import {
   GameStatus,
 } from '../types';
 import { FRUIT_CONFIGS } from '../utils/fruitData';
-import { lineIntersectsCircle, Point, distance } from '../utils/geometry';
+import { lineIntersectsCircle, Point, distance, relaxTrailPoints, generateCurvingThread, generateScrambledCut } from '../utils/geometry';
 import { sound } from '../utils/audio';
 
 interface GameCanvasProps {
@@ -200,20 +200,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         });
       }
 
+      // Generate scrambled cut geometry passing through the exact impact / touch point
+      const cutData = generateScrambledCut(
+        { x: fruit.x, y: fruit.y },
+        fruit.radius,
+        impactPoint,
+        sliceAngle,
+        14
+      );
+
       // Sliced Halves Physics
       const normalAngle = sliceAngle + Math.PI / 2;
-      const spreadSpeed = 3.5 + Math.random() * 2;
+      const spreadSpeed = 3.8 + Math.random() * 2.2;
 
-      // Left half
+      // Left half (pushed along negative normal)
       halvesRef.current.push({
         id: Math.random().toString(),
         type: fruit.type,
-        x: fruit.x - Math.cos(normalAngle) * 8,
-        y: fruit.y - Math.sin(normalAngle) * 8,
+        x: fruit.x - Math.cos(normalAngle) * 7,
+        y: fruit.y - Math.sin(normalAngle) * 7,
         vx: fruit.vx - Math.cos(normalAngle) * spreadSpeed,
         vy: fruit.vy - Math.sin(normalAngle) * spreadSpeed - 2,
         rotation: fruit.rotation,
-        vRot: fruit.vRot - 0.08,
+        vRot: fruit.vRot - (0.07 + Math.random() * 0.05),
         sliceAngle,
         isLeftHalf: true,
         radius: fruit.radius,
@@ -221,18 +230,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         innerColor: fruit.innerColor,
         rindColor: fruit.rindColor,
         life: 0,
+        cutOffset: cutData.cutOffset,
+        scrambledPoints: cutData.scrambledPoints,
       });
 
-      // Right half
+      // Right half (pushed along positive normal)
       halvesRef.current.push({
         id: Math.random().toString(),
         type: fruit.type,
-        x: fruit.x + Math.cos(normalAngle) * 8,
-        y: fruit.y + Math.sin(normalAngle) * 8,
+        x: fruit.x + Math.cos(normalAngle) * 7,
+        y: fruit.y + Math.sin(normalAngle) * 7,
         vx: fruit.vx + Math.cos(normalAngle) * spreadSpeed,
         vy: fruit.vy + Math.sin(normalAngle) * spreadSpeed - 2,
         rotation: fruit.rotation,
-        vRot: fruit.vRot + 0.08,
+        vRot: fruit.vRot + (0.07 + Math.random() * 0.05),
         sliceAngle,
         isLeftHalf: false,
         radius: fruit.radius,
@@ -240,7 +251,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         innerColor: fruit.innerColor,
         rindColor: fruit.rindColor,
         life: 0,
+        cutOffset: cutData.cutOffset,
+        scrambledPoints: cutData.scrambledPoints,
       });
+
+      // Extra touch-point burst sparks
+      for (let s = 0; s < 8; s++) {
+        const a = Math.random() * Math.PI * 2;
+        const spd = Math.random() * 4 + 2;
+        particlesRef.current.push({
+          x: impactPoint.x,
+          y: impactPoint.y,
+          vx: Math.cos(a) * spd,
+          vy: Math.sin(a) * spd - 1.5,
+          color: '#ffffff',
+          size: Math.random() * 2.5 + 1.5,
+          life: 0,
+          maxLife: 16,
+          shape: 'spark',
+        });
+      }
 
       // Juice Splatter on Dojo background
       if (Math.random() < 0.75) {
@@ -338,18 +368,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [mode, bladeStyle, onFruitSliced, onGameOver, onScoreUpdate, activePowerups, onActivatePowerup]
   );
 
-  // Check blade intersection with active fruits
+  // Check blade intersection and direct touch contact with active fruits
   const checkCollisions = useCallback(
     (p1: Point, p2: Point) => {
-      // Swipe velocity threshold check
-      const dist = distance(p1, p2);
-      if (dist < 4) return; // Prevent slicing when standing still
-
       const activeFruits = fruitsRef.current.filter((f) => !f.isSliced);
+      if (activeFruits.length === 0) return;
+
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const dist = Math.hypot(dx, dy);
+
       for (const fruit of activeFruits) {
-        const hit = lineIntersectsCircle(p1, p2, { x: fruit.x, y: fruit.y }, fruit.radius);
-        if (hit.intersects) {
-          handleSlice(fruit, hit.angle, hit.impactPoint);
+        // Direct contact test at point p2 (current finger / cursor position)
+        const dCursor = Math.hypot(p2.x - fruit.x, p2.y - fruit.y);
+        if (dCursor <= fruit.radius + 6) {
+          // Immediate cut on touch!
+          let angle: number;
+          if (dist > 1.5) {
+            angle = Math.atan2(dy, dx);
+          } else {
+            const rx = p2.x - fruit.x;
+            const ry = p2.y - fruit.y;
+            angle = Math.hypot(rx, ry) > 3 ? Math.atan2(ry, rx) + Math.PI / 2 : -Math.PI / 4;
+          }
+          handleSlice(fruit, angle, { x: p2.x, y: p2.y });
+          continue;
+        }
+
+        // Line segment swipe intersection test (if moving)
+        if (dist >= 1.0) {
+          const hit = lineIntersectsCircle(p1, p2, { x: fruit.x, y: fruit.y }, fruit.radius);
+          if (hit.intersects) {
+            handleSlice(fruit, hit.angle, hit.impactPoint);
+          }
         }
       }
     },
@@ -364,33 +415,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       if (trail.length > 0) {
         const last = trail[trail.length - 1];
-        checkCollisions(last, { x, y });
-        // Blade swish audio on fast motions
         const dist = distance(last, { x, y });
+        checkCollisions(last, { x, y });
+
+        // Blade swish audio on fast motions
         if (dist > 35 && Math.random() < 0.25) {
           sound.playSwish();
+        }
+
+        // Prevent zero-distance clumping (< 2px) which creates angular micro-kinks
+        if (dist < 2.0) {
+          last.timestamp = now;
+          return;
         }
       }
 
       trail.push({ x, y, timestamp: now });
 
       // Blade spark particles at tip
-      if (Math.random() < 0.6) {
+      if (Math.random() < 0.45) {
         particlesRef.current.push({
           x,
           y,
           vx: (Math.random() - 0.5) * 2,
           vy: (Math.random() - 0.5) * 2,
           color: bladeStyle.particleColor,
-          size: Math.random() * 3 + 1,
+          size: Math.random() * 2.5 + 1,
           life: 0,
-          maxLife: 15,
+          maxLife: 14,
           shape: 'spark',
         });
       }
 
-      // Limit queue to recent 150ms
-      while (trail.length > 0 && now - trail[0].timestamp > 160) {
+      // Retain points for 250ms for a flowing, graceful thread
+      while (trail.length > 0 && now - trail[0].timestamp > 250) {
         trail.shift();
       }
     },
@@ -401,6 +459,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const lastHandPosRef = useRef<{ x: number; y: number } | null>(null);
   const addBladePointRef = useRef(addBladePoint);
   useEffect(() => { addBladePointRef.current = addBladePoint; }, [addBladePoint]);
+  const checkCollisionsRef = useRef(checkCollisions);
+  useEffect(() => { checkCollisionsRef.current = checkCollisions; }, [checkCollisions]);
 
   // Mouse & Touch events handlers
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -410,6 +470,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const y = e.clientY - rect.top;
     mousePosRef.current = { x, y };
     bladeTrailRef.current = [{ x, y, timestamp: performance.now() }];
+    checkCollisions({ x, y }, { x, y });
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -451,16 +512,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const dt = Math.min((timestamp - lastFrameTimeRef.current) / 1000, 0.1);
       lastFrameTimeRef.current = timestamp;
 
-      // Read hand position ref every frame — zero React overhead
+      // Read and smoothly advance hand position ref every frame — sub-frame continuous interpolation
       const handPos = bladeInputPosRef.current;
       const canvas2 = canvasRef.current;
       if (canvas2 && handPos) {
         const dpr2 = window.devicePixelRatio || 1;
-        const cx = handPos.x * (canvas2.width / dpr2);
-        const cy = handPos.y * (canvas2.height / dpr2);
-        if (cx !== lastHandPosRef.current?.x || cy !== lastHandPosRef.current?.y) {
-          lastHandPosRef.current = { x: cx, y: cy };
-          addBladePointRef.current(cx, cy);
+        const targetX = handPos.x * (canvas2.width / dpr2);
+        const targetY = handPos.y * (canvas2.height / dpr2);
+
+        if (!lastHandPosRef.current) {
+          lastHandPosRef.current = { x: targetX, y: targetY };
+          addBladePointRef.current(targetX, targetY);
+        } else {
+          // 60 FPS sub-frame smooth interpolation towards target
+          const dx = targetX - lastHandPosRef.current.x;
+          const dy = targetY - lastHandPosRef.current.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist > 0.4) {
+            // Adaptive interpolation step: rapid response with smooth continuous transition
+            const step = Math.min(1.0, 0.92);
+            const nextX = lastHandPosRef.current.x + dx * step;
+            const nextY = lastHandPosRef.current.y + dy * step;
+            lastHandPosRef.current = { x: nextX, y: nextY };
+            addBladePointRef.current(nextX, nextY);
+          } else {
+            // Very small or zero motion: keep tip fresh without adding jitter
+            if (bladeTrailRef.current.length > 0) {
+              bladeTrailRef.current[bladeTrailRef.current.length - 1].timestamp = performance.now();
+            }
+            if (lastHandPosRef.current) {
+              checkCollisionsRef.current(lastHandPosRef.current, { x: targetX, y: targetY });
+            }
+          }
         }
       } else if (!handPos && lastHandPosRef.current !== null) {
         lastHandPosRef.current = null;
@@ -669,9 +753,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // 6. Draw Glowing Sword Trail
       drawBladeTrail(ctx, bladeTrailRef.current, bladeStyle);
 
-      // Clean old blade points
+      // Clean old blade points (250ms graceful thread duration)
       const now = performance.now();
-      while (bladeTrailRef.current.length > 0 && now - bladeTrailRef.current[0].timestamp > 180) {
+      while (bladeTrailRef.current.length > 0 && now - bladeTrailRef.current[0].timestamp > 250) {
         bladeTrailRef.current.shift();
       }
 
@@ -911,7 +995,8 @@ function drawFruit(ctx: CanvasRenderingContext2D, fruit: Fruit) {
 }
 
 /**
- * Renders cleanly sliced half with pulp, rim, seeds, and cross-section
+ * Renders sliced fruit half with scrambled / jagged cut face passing through the contact point,
+ * rich pulp, seeds, rind, and juicy highlight.
  */
 function drawSlicedHalf(ctx: CanvasRenderingContext2D, half: SlicedHalf) {
   ctx.save();
@@ -919,101 +1004,240 @@ function drawSlicedHalf(ctx: CanvasRenderingContext2D, half: SlicedHalf) {
   ctx.rotate(half.sliceAngle + half.rotation);
 
   const r = half.radius;
+  const pts = half.scrambledPoints;
+  const offset = half.cutOffset ?? 0;
 
-  // Semi-circle path
-  ctx.beginPath();
-  if (half.isLeftHalf) {
-    ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, true);
-  } else {
-    ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
-  }
-  ctx.closePath();
+  if (pts && pts.length >= 2) {
+    const halfChord = Math.sqrt(Math.max(1, r * r - offset * offset));
+    const phiTop = Math.atan2(-halfChord, offset);
+    const phiBot = Math.atan2(halfChord, offset);
 
-  // Rind / Skin
-  ctx.fillStyle = half.color;
-  ctx.fill();
-
-  // Inner pulp layer
-  ctx.beginPath();
-  if (half.isLeftHalf) {
-    ctx.arc(0, 0, r * 0.85, -Math.PI / 2, Math.PI / 2, true);
-  } else {
-    ctx.arc(0, 0, r * 0.85, -Math.PI / 2, Math.PI / 2, false);
-  }
-  ctx.closePath();
-  ctx.fillStyle = half.innerColor;
-  ctx.fill();
-
-  // Seeds inside watermelon or apple
-  if (half.type === 'watermelon') {
-    ctx.fillStyle = '#212121';
-    for (let s = -r * 0.5; s <= r * 0.5; s += 16) {
-      const sx = half.isLeftHalf ? -12 : 12;
-      ctx.beginPath();
-      ctx.arc(sx, s, 2.5, 0, Math.PI * 2);
-      ctx.fill();
+    // Build the outer silhouette of this scrambled half
+    ctx.beginPath();
+    if (half.isLeftHalf) {
+      // Outer circular arc on the left side: from phiBot clockwise through PI to phiTop
+      ctx.arc(0, 0, r, phiBot, phiTop, false);
+      // Scrambled cut edge from top to bottom
+      for (let i = 0; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+    } else {
+      // Outer circular arc on the right side: from phiTop clockwise through 0 to phiBot
+      ctx.arc(0, 0, r, phiTop, phiBot, false);
+      // Scrambled cut edge from bottom back to top
+      for (let i = pts.length - 1; i >= 0; i--) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
     }
-  }
+    ctx.closePath();
 
-  // Exposed cut line highlight
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, -r);
-  ctx.lineTo(0, r);
-  ctx.stroke();
+    // 1. Fill Rind / Skin
+    ctx.fillStyle = half.color;
+    ctx.fill();
+
+    // 2. Draw Pulp Layer (clipped to half silhouette)
+    ctx.save();
+    ctx.clip();
+
+    ctx.fillStyle = half.innerColor;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.86, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Fruit specific pulp texture & seeds
+    if (half.type === 'watermelon') {
+      // Watermelon black seeds along the scrambled cut
+      ctx.fillStyle = '#1e1e1e';
+      const seedCount = 6;
+      for (let i = 0; i < seedCount; i++) {
+        const seedT = (i + 1) / (seedCount + 1);
+        const sy = -halfChord * 0.75 + seedT * (halfChord * 1.5);
+        const sx = half.isLeftHalf ? offset - 10 - (i % 2) * 5 : offset + 10 + (i % 2) * 5;
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, 3, 2, Math.PI / 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (half.type === 'orange') {
+      // Orange radial segment dividers
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.lineWidth = 1.5;
+      for (let a = 0; a < Math.PI * 2; a += Math.PI / 5) {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * r * 0.82, Math.sin(a) * r * 0.82);
+        ctx.stroke();
+      }
+    } else if (half.type === 'apple') {
+      // Apple core and seeds
+      ctx.fillStyle = '#3e2723';
+      const seedX = half.isLeftHalf ? offset - 6 : offset + 6;
+      ctx.beginPath();
+      ctx.ellipse(seedX, -5, 3.5, 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(seedX, 5, 3.5, 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (half.type.includes('banana')) {
+      // Banana center core dots
+      ctx.fillStyle = '#8d6e63';
+      for (let d = -r * 0.4; d <= r * 0.4; d += 8) {
+        ctx.beginPath();
+        ctx.arc(offset + (half.isLeftHalf ? -3 : 3), d, 1.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (half.type === 'strawberry') {
+      // Strawberry radiating streaks
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.lineWidth = 1.2;
+      for (let a = -Math.PI / 2; a <= Math.PI / 2; a += Math.PI / 6) {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * r * 0.7, Math.sin(a) * r * 0.7);
+        ctx.stroke();
+      }
+    } else if (half.type === 'pineapple') {
+      // Pineapple fibrous rings
+      ctx.strokeStyle = 'rgba(245, 127, 23, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore(); // end clip
+
+    // 3. Highlight the Scrambled Cut Face Edge
+    ctx.beginPath();
+    if (half.isLeftHalf) {
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+    } else {
+      ctx.moveTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+      for (let i = pts.length - 2; i >= 0; i--) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+    }
+    // Juicy glistening edge highlight
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'bevel';
+    ctx.stroke();
+
+    // Inner fruit color glow along the scrambled cut
+    ctx.strokeStyle = half.innerColor;
+    ctx.lineWidth = 1.0;
+    ctx.stroke();
+  } else {
+    // Fallback semi-circle path
+    ctx.beginPath();
+    if (half.isLeftHalf) {
+      ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, true);
+    } else {
+      ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
+    }
+    ctx.closePath();
+
+    ctx.fillStyle = half.color;
+    ctx.fill();
+
+    ctx.beginPath();
+    if (half.isLeftHalf) {
+      ctx.arc(0, 0, r * 0.85, -Math.PI / 2, Math.PI / 2, true);
+    } else {
+      ctx.arc(0, 0, r * 0.85, -Math.PI / 2, Math.PI / 2, false);
+    }
+    ctx.closePath();
+    ctx.fillStyle = half.innerColor;
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.lineTo(0, r);
+    ctx.stroke();
+  }
 
   ctx.restore();
 }
 
 /**
- * Renders glowing, tapered sword trail
+ * Renders an ultra-smooth, curving thread that flows without angular bends
  */
 function drawBladeTrail(ctx: CanvasRenderingContext2D, trail: BladePoint[], style: BladeStyle) {
   if (trail.length < 2) return;
 
   const now = performance.now();
+  const tipAge = now - trail[trail.length - 1].timestamp;
+  const baseAlpha = Math.max(0, 1 - tipAge / 250);
+  if (baseAlpha <= 0.02) return;
+
+  // 1. Thread Bending Stiffness Relaxation (Laplacian smoothing)
+  // Removes any residual sharp kinks from hand detection noise
+  const relaxed = relaxTrailPoints(trail, 0.36, 2);
+
+  // 2. Continuous Centripetal Catmull-Rom Spline Curve (dense smooth points)
+  const thread = generateCurvingThread(relaxed, 8);
+  const N = thread.length;
+  if (N < 2) return;
 
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  for (let i = 1; i < trail.length; i++) {
-    const p0 = trail[i - 1];
-    const p1 = trail[i];
-    const age = now - p1.timestamp;
-    const alpha = Math.max(0, 1 - age / 180);
-    const progress = i / trail.length; // 0 at tail, 1 at blade tip
+  // --- Pass 1: Outer glowing aura (tapering from 15px down to fine thread) ---
+  ctx.strokeStyle = style.glowColor;
+  for (let i = 0; i < N - 1; i++) {
+    const t = (i + 1) / N; // 0 (tail) -> 1 (head)
+    const progress = Math.pow(t, 0.85);
+    ctx.lineWidth = Math.max(1, 15 * progress);
+    ctx.globalAlpha = baseAlpha * (0.08 + 0.32 * progress);
 
-    const width = progress * 9 + 2;
-
-    // Outer glow
-    ctx.strokeStyle = style.glowColor;
-    ctx.lineWidth = width * 2.2;
-    ctx.globalAlpha = alpha * 0.45;
     ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.lineTo(p1.x, p1.y);
-    ctx.stroke();
-
-    // Primary blade color
-    ctx.strokeStyle = style.primaryColor;
-    ctx.lineWidth = width;
-    ctx.globalAlpha = alpha * 0.85;
-    ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.lineTo(p1.x, p1.y);
-    ctx.stroke();
-
-    // Razor white inner core
-    ctx.strokeStyle = style.coreColor;
-    ctx.lineWidth = Math.max(1.5, width * 0.35);
-    ctx.globalAlpha = alpha * 0.95;
-    ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.lineTo(p1.x, p1.y);
+    ctx.moveTo(thread[i].x, thread[i].y);
+    ctx.lineTo(thread[i + 1].x, thread[i + 1].y);
     ctx.stroke();
   }
+
+  // --- Pass 2: Saturated thread body (tapering from 5.5px down to 0.75px) ---
+  ctx.strokeStyle = style.primaryColor;
+  for (let i = 0; i < N - 1; i++) {
+    const t = (i + 1) / N;
+    const progress = Math.pow(t, 0.9);
+    ctx.lineWidth = Math.max(0.75, 5.5 * progress);
+    ctx.globalAlpha = baseAlpha * (0.18 + 0.75 * progress);
+
+    ctx.beginPath();
+    ctx.moveTo(thread[i].x, thread[i].y);
+    ctx.lineTo(thread[i + 1].x, thread[i + 1].y);
+    ctx.stroke();
+  }
+
+  // --- Pass 3: Radiant incandescent inner core (tapering from 2px down to 0.4px) ---
+  ctx.strokeStyle = style.coreColor;
+  for (let i = 0; i < N - 1; i++) {
+    const t = (i + 1) / N;
+    const progress = Math.pow(t, 1.05);
+    ctx.lineWidth = Math.max(0.4, 2.0 * progress);
+    ctx.globalAlpha = baseAlpha * (0.30 + 0.70 * progress);
+
+    ctx.beginPath();
+    ctx.moveTo(thread[i].x, thread[i].y);
+    ctx.lineTo(thread[i + 1].x, thread[i + 1].y);
+    ctx.stroke();
+  }
+
+  // --- Pass 4: Glowing guide bead at the leading tip (hand/finger) ---
+  const tip = thread[N - 1];
+  ctx.globalAlpha = baseAlpha * 0.95;
+  ctx.fillStyle = style.coreColor;
+  ctx.shadowColor = style.glowColor;
+  ctx.shadowBlur = 12;
+
+  ctx.beginPath();
+  ctx.arc(tip.x, tip.y, 3.2, 0, Math.PI * 2);
+  ctx.fill();
 
   ctx.restore();
 }
