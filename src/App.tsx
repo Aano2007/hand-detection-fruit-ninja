@@ -277,9 +277,18 @@ export default function App() {
   };
 
   // Toggle pause
-  const handleTogglePause = () => {
+  const handleTogglePause = useCallback(() => {
     setStatus((prev) => (prev === 'playing' ? 'paused' : prev === 'paused' ? 'playing' : prev));
-  };
+  }, []);
+
+  // ESC key to pause/resume
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleTogglePause();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleTogglePause]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden wood-grain select-none">

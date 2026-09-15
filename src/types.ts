@@ -88,6 +88,7 @@ export interface JuiceSplatter {
   color: string;
   alpha: number;
   drops: { x: number; y: number; r: number }[];
+  createdAt: number;
 }
 
 export interface BladePoint {

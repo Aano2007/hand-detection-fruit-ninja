@@ -263,8 +263,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           color: fruit.innerColor,
           alpha: 0.65,
           drops,
+          createdAt: performance.now(),
         });
-        // Limit max splatters on screen for performance
         if (splattersRef.current.length > 25) {
           splattersRef.current.shift();
         }
@@ -534,11 +534,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillRect(0, 0, width, height);
       }
 
-      // 1. Draw Juice Splatters
+      // 1. Draw Juice Splatters (fade out over 4 seconds)
+      const now2 = performance.now();
+      splattersRef.current = splattersRef.current.filter((s) => now2 - s.createdAt < 4000);
       splattersRef.current.forEach((s) => {
+        const age = now2 - s.createdAt;
+        const fade = Math.max(0, 1 - age / 4000);
         ctx.save();
         ctx.fillStyle = s.color;
-        ctx.globalAlpha = s.alpha * 0.55;
+        ctx.globalAlpha = s.alpha * 0.55 * fade;
 
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
@@ -557,23 +561,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const isFrenzy = activePowerups.some((p) => p.type === 'frenzy');
         const currentInterval = isFrenzy ? 300 : nextSpawnIntervalRef.current;
 
-        // Optimal on-screen fruit limits: max 5 active unsliced fruits normally, max 9 in frenzy mode
-        const maxOnScreenFruits = isFrenzy ? 9 : 5;
+        // Optimal on-screen fruit limits: max 3 active unsliced fruits normally, max 6 in frenzy mode
+        const maxOnScreenFruits = isFrenzy ? 6 : 3;
         const currentActiveCount = fruitsRef.current.filter((f) => !f.isSliced).length;
 
         if (timestamp - lastSpawnTimeRef.current > currentInterval && currentActiveCount < maxOnScreenFruits) {
           lastSpawnTimeRef.current = timestamp;
-          // Challenging yet fair Fruit Ninja cadence: 850ms - 1450ms between tosses
-          nextSpawnIntervalRef.current = Math.random() * 600 + 850;
+          // Relaxed cadence: 1200ms - 2000ms between tosses
+          nextSpawnIntervalRef.current = Math.random() * 800 + 1200;
 
-          // Spawn batch (1 to 3 fruits, bounded by remaining capacity)
+          // Spawn batch: mostly 1, occasionally 2, never 3 outside frenzy
           const availableSlots = maxOnScreenFruits - currentActiveCount;
           const batchRand = Math.random();
           const desiredBatchSize = isFrenzy
-            ? Math.floor(Math.random() * 3) + 2 // 2-4 fruits per toss in frenzy
-            : batchRand < 0.20
-            ? 3
-            : batchRand < 0.60
+            ? Math.floor(Math.random() * 2) + 2 // 2-3 fruits per toss in frenzy
+            : batchRand < 0.25
             ? 2
             : 1;
 

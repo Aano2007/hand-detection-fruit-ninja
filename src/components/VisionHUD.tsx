@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { VisionStats } from '../types';
-import { Camera, CameraOff, ChevronDown, ChevronUp, Cpu, Hand, AlertCircle } from 'lucide-react';
+import { Camera, CameraOff, ChevronDown, ChevronUp, Cpu, AlertCircle } from 'lucide-react';
 import { HAND_CONNECTIONS, NormalizedLandmark } from '../utils/visionTracker';
 
 interface VisionHUDProps {
@@ -119,15 +119,6 @@ export const VisionHUD: React.FC<VisionHUDProps> = ({
           className="absolute inset-0 w-full h-full pointer-events-none"
         />
 
-        {/* Overlay Status Badge */}
-        <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-sm text-[10px] font-mono font-semibold text-cyan-300 border border-cyan-500/40">
-          <span
-            className={`w-2 h-2 rounded-full ${
-              stats.handDetected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-            }`}
-          />
-          <span>{stats.handDetected ? 'HAND DETECTED' : 'SEARCHING HAND'}</span>
-        </div>
 
         {/* Toggle Expand PIP */}
         <button
@@ -138,23 +129,7 @@ export const VisionHUD: React.FC<VisionHUDProps> = ({
           {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
         </button>
 
-        {/* Live Finger Coordinate / Pinch Indicator Bar */}
-        {stats.handDetected ? (
-          <div className="absolute bottom-2 inset-x-2 bg-black/80 rounded-lg px-2 py-1 flex items-center justify-between text-[10px] font-mono text-stone-200 border border-cyan-500/20">
-            <span className="text-amber-300 font-bold">Index Blade Active</span>
-            <span
-              className={`font-bold px-1.5 py-0.5 rounded text-[9px] ${
-                stats.isPinching ? 'bg-emerald-500 text-white' : 'bg-cyan-900/60 text-cyan-300'
-              }`}
-            >
-              {pinchOnlyMode ? (stats.isPinching ? 'PINCHING' : 'PINCH TO CUT') : 'SWIPE LIVE'}
-            </span>
-          </div>
-        ) : (
-          <div className="absolute bottom-2 inset-x-2 bg-black/80 rounded-lg px-2 py-1 text-center text-[10px] font-mono text-amber-300 border border-amber-500/30">
-            Show hand inside camera frame
-          </div>
-        )}
+
       </div>
 
       {/* Control Bar & Telemetry Panel */}
@@ -190,19 +165,8 @@ export const VisionHUD: React.FC<VisionHUDProps> = ({
         </div>
 
         {/* Input Mode Info */}
-        <div className="flex items-center justify-between text-[11px] text-stone-400 pt-1 border-t border-stone-800/80">
-          <div className="flex items-center gap-1.5">
-            <Hand className="w-3.5 h-3.5 text-amber-400" />
-            <span>
-              {isCameraActive
-                ? stats.handDetected
-                  ? 'Landmark 8 (Index Blade)'
-                  : 'Raise hand in front of camera'
-                : 'Mouse / Touch Slice Mode'}
-            </span>
-          </div>
-
-          {isCameraActive && (
+        {isCameraActive && (
+          <div className="flex items-center justify-end pt-1 border-t border-stone-800/80">
             <button
               onClick={onTogglePinchMode}
               title="Toggle whether blade cuts continuously with index finger or only when pinching thumb & index"
@@ -214,8 +178,8 @@ export const VisionHUD: React.FC<VisionHUDProps> = ({
             >
               {pinchOnlyMode ? 'Pinch Mode: ON' : 'Free Motion Blade'}
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Camera error notification if any */}
         {stats.cameraError && (
